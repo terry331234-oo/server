@@ -156,7 +156,9 @@ function concatParams(val1, val2) {
 }
 
 async function getTableColumns(ctx, tableName) {
-  const result = await executeQuery(ctx, `SELECT column_name FROM DBA_TAB_COLUMNS WHERE table_name = '${tableName.toUpperCase()}';`);
+  let values = [];
+  let sqlParam = addSqlParameter(tableName.toUpperCase(), values);
+  const result = await executeQuery(ctx, `SELECT column_name FROM DBA_TAB_COLUMNS WHERE table_name = ${sqlParam};`, values);
   return result.map(row => { return { column_name: row.column_name.toLowerCase() }});
 }
 
