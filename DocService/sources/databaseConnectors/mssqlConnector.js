@@ -199,8 +199,10 @@ function concatParams(...parameters) {
 }
 
 function getTableColumns(ctx, tableName) {
-  const sqlCommand = `SELECT column_name FROM information_schema.COLUMNS WHERE TABLE_NAME = '${tableName}' AND TABLE_SCHEMA = 'dbo';`;
-  return executeQuery(ctx, sqlCommand);
+  let values = [];
+  let sqlParam = addSqlParameter(tableName, values);
+  const sqlCommand = `SELECT column_name FROM information_schema.COLUMNS WHERE TABLE_NAME = ${sqlParam} AND TABLE_SCHEMA = 'dbo';`;
+  return executeQuery(ctx, sqlCommand, values);
 }
 
 function getDocumentsWithChanges(ctx) {

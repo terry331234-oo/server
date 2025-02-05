@@ -171,7 +171,9 @@ function concatParams(firstParameter, secondParameter) {
 }
 
 function getTableColumns(ctx, tableName) {
-  return executeQuery(ctx, `SELECT LOWER(column_name) AS column_name FROM user_tab_columns WHERE table_name = '${tableName.toUpperCase()}'`);
+  let values = [];
+  let sqlParam = addSqlParameter(tableName.toUpperCase(), values);
+  return executeQuery(ctx, `SELECT LOWER(column_name) AS column_name FROM user_tab_columns WHERE table_name = ${sqlParam}`, values);
 }
 
 function getEmptyCallbacks(ctx) {
