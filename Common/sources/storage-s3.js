@@ -38,6 +38,7 @@ const path = require('path');
 const { S3Client, ListObjectsCommand, HeadObjectCommand} = require("@aws-sdk/client-s3");
 const { GetObjectCommand, PutObjectCommand, CopyObjectCommand} = require("@aws-sdk/client-s3");
 const { DeleteObjectsCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
+const { STSClient, AssumeRoleCommand } = require("@aws-sdk/client-sts");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const { NodeHttpHandler } = require("@aws-sdk/node-http-handler");
 const mime = require('mime');
@@ -52,8 +53,51 @@ const cfgRequestDefaults = config.get('services.CoAuthoring.requestDefaults');
 //This operation enables you to delete multiple objects from a bucket using a single HTTP request. You may specify up to 1000 keys.
 const MAX_DELETE_OBJECTS = 1000;
 let clients = {};
+let roleCredentials = {};
 
-function getS3Client(storageCfg) {
+async function getTemporaryCredentials(storageCfg) {
+  let configuration = {
+    region: storageCfg.region
+  }
+  if (storageCfg.accessKeyId && storageCfg.secretAccessKey) {
+    configuration.credentials = {
+      accessKeyId: storageCfg.accessKeyId,
+      secretAccessKey: storageCfg.secretAccessKey
+    }
+  }
+  const stsClient = new STSClient(configuration);
+
+  const command = new AssumeRoleCommand(storageCfg.role);
+  const response = await stsClient.send(command);
+  return {
+    accessKeyId: response.Credentials.AccessKeyId,
+    secretAccessKey: response.Credentials.SecretAccessKey,
+    sessionToken: response.Credentials.SessionToken,
+    expiration: response.Credentials.Expiration,
+  };
+}
+
+async function refreshCredentialsIfNeeded(storageCfg) {
+  let roleCredential = roleCredentials[storageCfg.role.RoleArn];
+  if (!roleCredential || Date.now() >= roleCredential.expiration) {
+    roleCredential = await getTemporaryCredentials(storageCfg);
+    roleCredentials[storageCfg.role.RoleArn] = roleCredential;
+  }
+  return roleCredential;
+}
+
+async function getS3Client(storageCfg) {
+  let credentials;
+  if (storageCfg.accessKeyId && storageCfg.secretAccessKey) {
+    credentials = {
+      accessKeyId: storageCfg.accessKeyId,
+      secretAccessKey: storageCfg.secretAccessKey
+    }
+  }
+  if (storageCfg?.role?.RoleArn) {
+    credentials = await refreshCredentialsIfNeeded(storageCfg);
+  }
+
   /**
    * Don't hard-code your credentials!
    * Export the following environment variables instead:
@@ -64,10 +108,7 @@ function getS3Client(storageCfg) {
   let configS3 = {
     region: storageCfg.region,
     endpoint: storageCfg.endpoint,
-    credentials : {
-      accessKeyId: storageCfg.accessKeyId,
-      secretAccessKey: storageCfg.secretAccessKey
-    }
+    credentials : credentials
   };
 
   if (configS3.endpoint) {
@@ -104,7 +145,8 @@ function joinListObjects(storageCfg, inputArray, outputArray) {
   }
 }
 async function listObjectsExec(storageCfg, output, params) {
-  const data = await getS3Client(storageCfg).send(new ListObjectsCommand(params));
+  let s3Client = await getS3Client(storageCfg);
+  const data = await s3Client.send(new ListObjectsCommand(params));
   joinListObjects(storageCfg, data.Contents, output);
   if (data.IsTruncated && (data.NextMarker || (data.Contents && data.Contents.length > 0))) {
     params.Marker = data.NextMarker || data.Contents[data.Contents.length - 1].Key;
@@ -124,7 +166,8 @@ async function deleteObjectsHelp(storageCfg, aKeys) {
       }
   };
   const command = new DeleteObjectsCommand(input);
-  await getS3Client(storageCfg).send(command);
+  let s3Client = await getS3Client(storageCfg);
+  await s3Client.send(command);
 }
 
 async function headObject(storageCfg, strPath) {
@@ -133,7 +176,8 @@ async function headObject(storageCfg, strPath) {
     Key: getFilePath(storageCfg, strPath)
   };
   const command = new HeadObjectCommand(input);
-  let output = await getS3Client(storageCfg).send(command);
+  let s3Client = await getS3Client(storageCfg);
+  let output = await s3Client.send(command);
   return {ContentLength: output.ContentLength};
 }
 async function getObject(storageCfg, strPath) {
@@ -142,7 +186,8 @@ async function getObject(storageCfg, strPath) {
     Key: getFilePath(storageCfg, strPath)
   };
   const command = new GetObjectCommand(input);
-  const output = await getS3Client(storageCfg).send(command);
+  let s3Client = await getS3Client(storageCfg);
+  const output = await s3Client.send(command);
 
   return await utils.stream2Buffer(output.Body);
 }
@@ -152,7 +197,8 @@ async function createReadStream(storageCfg, strPath) {
     Key: getFilePath(storageCfg, strPath)
           };
   const command = new GetObjectCommand(input);
-  const output = await getS3Client(storageCfg).send(command);
+  let s3Client = await getS3Client(storageCfg);
+  const output = await s3Client.send(command);
   return {
     contentLength: output.ContentLength,
     readStream: output.Body
@@ -168,7 +214,8 @@ async function putObject(storageCfg, strPath, buffer, contentLength) {
     ContentType: mime.getType(strPath)
   };
   const command = new PutObjectCommand(input);
-  await getS3Client(storageCfg).send(command);
+  let s3Client = await getS3Client(storageCfg);
+  await s3Client.send(command);
 }
 async function uploadObject(storageCfg, strPath, filePath) {
   const file = fs.createReadStream(filePath);
@@ -180,7 +227,8 @@ async function uploadObject(storageCfg, strPath, filePath) {
     ContentType: mime.getType(strPath)
   };
   const command = new PutObjectCommand(input);
-  await getS3Client(storageCfg).send(command);
+  let s3Client = await getS3Client(storageCfg);
+  await s3Client.send(command);
 }
 async function copyObject(storageCfgSrc, storageCfgDst, sourceKey, destinationKey) {
   //todo source bucket
@@ -190,7 +238,8 @@ async function copyObject(storageCfgSrc, storageCfgDst, sourceKey, destinationKe
     CopySource: `/${storageCfgSrc.bucketName}/${getFilePath(storageCfgSrc, sourceKey)}`
   };
   const command = new CopyObjectCommand(input);
-  await getS3Client(storageCfgDst).send(command);
+  let s3Client = await getS3Client(storageCfg);
+  await s3Client.send(command);
 }
 async function listObjects(storageCfg, strPath) {
   let params = {
@@ -207,7 +256,8 @@ async function deleteObject(storageCfg, strPath) {
     Key: getFilePath(storageCfg, strPath)
   };
   const command = new DeleteObjectCommand(input);
-  await getS3Client(storageCfg).send(command);
+  let s3Client = await getS3Client(storageCfg);
+  await s3Client.send(command);
 };
 async function deleteObjects(storageCfg, strPaths) {
   let aKeys = strPaths.map(function (currentValue) {
@@ -239,7 +289,8 @@ async function getSignedUrlWrapper(ctx, storageCfg, baseUrl, strPath, urlType, o
   let options = {
     expiresIn: expires
     };
-  return await getSignedUrl(getS3Client(storageCfg), command, options);
+  let s3Client = await getS3Client(storageCfg);
+  return await getSignedUrl(s3Client, command, options);
   //extra query params cause SignatureDoesNotMatch
   //https://stackoverflow.com/questions/55503009/amazon-s3-signature-does-not-match-when-extra-query-params-ga-added-in-url
   // return utils.changeOnlyOfficeUrl(url, strPath, optFilename);

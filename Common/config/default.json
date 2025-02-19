@@ -107,7 +107,9 @@
 		"secretAccessKey": "SECRET",
 		"sslEnabled": false,
 		"s3ForcePathStyle": true,
-		"externalHost": ""
+		"externalHost": "",
+		"role": {
+		}
 	},
 	"persistentStorage": {
 	},
