@@ -31,7 +31,7 @@ CREATE TABLE doc_changes(
     user_name NVARCHAR(255) NOT NULL,
     change_data NVARCHAR(MAX) NOT NULL,
     change_date DATETIME NOT NULL,
-    PRIMARY KEY (tenant, id, change_id)
+    PRIMARY KEY NONCLUSTERED (tenant, id, change_id)
 ) WITH (DATA_COMPRESSION = PAGE);
 
 CREATE TABLE task_result (
@@ -47,6 +47,6 @@ CREATE TABLE task_result (
     baseurl NVARCHAR(MAX) NOT NULL,
     password NVARCHAR(MAX) NULL,
     additional NVARCHAR(MAX) NULL,
-    PRIMARY KEY (tenant, id)
+    PRIMARY KEY NONCLUSTERED (tenant, id)
 ) WITH (DATA_COMPRESSION = PAGE);
 GO
